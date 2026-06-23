@@ -20,6 +20,10 @@ PTR_BER_vector   = zeros(4,1);
 SCM_OSNR_vector  = zeros(4,1);      % SCM-PTR（サブアレイMRC合成）
 SCM_BER_vector   = zeros(4,1);
 
+% 星座図描画用：各音源の復調後シンボルを保存
+PTR_syms_all = cell(4,1);
+SCM_syms_all = cell(4,1);
+
 for idx_sd = 1:4
 
     %% エリア①：送信信号
@@ -109,6 +113,7 @@ for idx_sd = 1:4
     PTR_OSNR_vector(idx_sd) = 10*log10(sigPower/mean(abs(symbols-ptrc).^2));
     db = zeros(2*numSymbols,1); db(1:2:end)=real(ptrc)>0; db(2:2:end)=imag(ptrc)>0;
     PTR_BER_vector(idx_sd) = sum(bits~=db)/length(bits);
+    PTR_syms_all{idx_sd} = ptrc;   % 星座図用に保存
 
     %% エリア③-B：SCM-PTR（サブアレイごとにPTR→MRC合成）
     scm_combined = zeros(numSymbols,1);   % MRC合成後シンボル
@@ -142,6 +147,7 @@ for idx_sd = 1:4
     SCM_OSNR_vector(idx_sd) = 10*log10(sigPower/mean(abs(symbols-scmC).^2));
     db = zeros(2*numSymbols,1); db(1:2:end)=real(scmC)>0; db(2:2:end)=imag(scmC)>0;
     SCM_BER_vector(idx_sd) = sum(bits~=db)/length(bits);
+    SCM_syms_all{idx_sd} = scmC;   % 星座図用に保存
 
 end % ◀ 音源ループ
 
@@ -165,3 +171,49 @@ for idx_sd = 1:4
     fprintf('  ➔ SCM-PTR (サブアレイMRC合成):\n');
     fprintf('     - OSNR: %.2f dB   BER: %f\n\n', SCM_OSNR_vector(idx_sd), SCM_BER_vector(idx_sd));
 end
+
+%% 星座図の描画（4音源 × 2手法 = 8プロット、2×4レイアウト）
+% 理想QPSK点（参照）
+qpsk_ideal = [1+1i, 1-1i, -1+1i, -1-1i];
+
+figure('Name', 'Constellation Diagrams', 'Position', [100 100 1200 560]);
+
+for idx_sd = 1:4
+    ptrc = PTR_syms_all{idx_sd};
+    scmC = SCM_syms_all{idx_sd};
+
+    % --- 通常PTR ---
+    subplot(2, 4, idx_sd);
+    plot(real(ptrc), imag(ptrc), '.', 'Color', [0.3 0.6 1.0], 'MarkerSize', 3);
+    hold on;
+    plot(real(qpsk_ideal), imag(qpsk_ideal), 'r+', 'MarkerSize', 12, 'LineWidth', 2);
+    hold off;
+    axis equal; grid on;
+    lim = max(3, ceil(max(abs([real(ptrc); imag(ptrc)]))));
+    xlim([-lim lim]); ylim([-lim lim]);
+    xlabel('I'); ylabel('Q');
+    title(sprintf('PTR 音源%d\nOSNR=%.1f dB, BER=%.3f', ...
+        idx_sd, PTR_OSNR_vector(idx_sd), PTR_BER_vector(idx_sd)));
+
+    % --- SCM-PTR ---
+    subplot(2, 4, 4 + idx_sd);
+    plot(real(scmC), imag(scmC), '.', 'Color', [0.1 0.8 0.3], 'MarkerSize', 3);
+    hold on;
+    plot(real(qpsk_ideal), imag(qpsk_ideal), 'r+', 'MarkerSize', 12, 'LineWidth', 2);
+    hold off;
+    axis equal; grid on;
+    lim = max(3, ceil(max(abs([real(scmC); imag(scmC)]))));
+    xlim([-lim lim]); ylim([-lim lim]);
+    xlabel('I'); ylabel('Q');
+    title(sprintf('SCM-PTR 音源%d\nOSNR=%.1f dB, BER=%.3f', ...
+        idx_sd, SCM_OSNR_vector(idx_sd), SCM_BER_vector(idx_sd)));
+end
+
+% 上段・下段にラベル
+annotation('textbox', [0.01 0.93 0.1 0.05], 'String', '【通常PTR】', ...
+    'FontSize', 11, 'FontWeight', 'bold', 'EdgeColor', 'none');
+annotation('textbox', [0.01 0.45 0.1 0.05], 'String', '【SCM-PTR】', ...
+    'FontSize', 11, 'FontWeight', 'bold', 'EdgeColor', 'none', 'Color', [0 0.5 0]);
+
+sgtitle(sprintf('QPSK 星座図比較  (NUM\\_SUB=%d, Rs=%d baud)', NUM_SUB, Rs), ...
+    'FontSize', 13, 'FontWeight', 'bold');
