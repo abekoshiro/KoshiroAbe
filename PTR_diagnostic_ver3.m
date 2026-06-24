@@ -28,9 +28,7 @@ PSR_all  = zeros(Nsd, 1);     % 全ch合算のPSR
 OSNR_all = zeros(Nsd, 1);     % 全ch合算(通常PTR)のOSNR
 OSNR_scm = zeros(Nsd, 1);     % SCM-MRC後のOSNR
 
-fprintf('%-6s  %-6s  %-12s  %-12s  %-12s\n', ...
-        '音源', '指標', '全ch(通常PTR)', ...
-        arrayfun(@(k)sprintf('距離%d(PSR/OSNR)',k),1:Nrr,'UniformOutput',false){:});
+fprintf('（各音源について、全ch合算PTR / 距離グループ別PTR / SCM-MRC の PSR・OSNR を表示します）\n');
 
 for idx_sd = 1:Nsd
 
@@ -165,7 +163,8 @@ figure('Name','PSR vs OSNR 詳細比較','Position',[50 50 220*(Nrr+2) 450]);
 ax1=subplot(1,3,1);
 data_psr=[PSR_all, PSR_sub];
 bar(data_psr);
-legend_labels={'全ch(合算)', arrayfun(@(k)sprintf('距離%d群',k),1:Nrr,'UniformOutput',false){:}};
+sub_names = arrayfun(@(k)sprintf('距離%d群',k),1:Nrr,'UniformOutput',false);
+legend_labels=[{'全ch(合算)'}, sub_names];
 legend(legend_labels,'Location','best');
 set(gca,'XTickLabel',arrayfun(@(k)sprintf('音源%d',k),1:Nsd,'UniformOutput',false));
 ylabel('PSR (dB)'); grid on; title('q関数 PSR比較');
@@ -174,7 +173,7 @@ ylabel('PSR (dB)'); grid on; title('q関数 PSR比較');
 ax2=subplot(1,3,2);
 data_osnr=[OSNR_all, OSNR_sub, OSNR_scm];
 bar(data_osnr);
-legend_labels2={'通常PTR(単一offset)', arrayfun(@(k)sprintf('距離%d群',k),1:Nrr,'UniformOutput',false){:}, 'SCM-MRC'};
+legend_labels2=[{'通常PTR(単一offset)'}, sub_names, {'SCM-MRC'}];
 legend(legend_labels2,'Location','best');
 set(gca,'XTickLabel',arrayfun(@(k)sprintf('音源%d',k),1:Nsd,'UniformOutput',false));
 ylabel('OSNR (dB)'); grid on; title('OSNR比較（通常PTR / サブアレイ別 / SCM）');
