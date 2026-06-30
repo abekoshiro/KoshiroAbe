@@ -239,26 +239,26 @@ for idx_sd = 1:Nsd
 end
 sgtitle(sprintf('QPSK 星座図比較  (NUM\\_SUB=%d, Rs=%d baud)', NUM_SUB, Rs), 'FontSize', 13, 'FontWeight', 'bold');
 
-%% ★星座図の描画②：距離群（サブアレイ）ごと
-%   行＝サブアレイ（距離群）、列＝音源。各群のPTR単体性能を可視化
-figure('Name', 'Constellation: per Subarray', 'Position', [120 120 300*Nsd 280*NUM_SUB]);
+%% ★星座図の描画②：距離群（サブアレイ）×音源ごとに個別の図を出力
+%   1枚 = 1距離群 × 1音源（例：2群×5音源 = 10枚）。小さくならず見やすい
 sub_colors = lines(NUM_SUB);
 for s = 1:NUM_SUB
     for idx_sd = 1:Nsd
         subC = SUB_syms_all{idx_sd, s};
-        subplot(NUM_SUB, Nsd, (s-1)*Nsd + idx_sd);
+        figure('Name', sprintf('%s 音源%d', sub_label{s}, idx_sd), ...
+               'Position', [100 + 30*((s-1)*Nsd+idx_sd), 100, 480, 480]);
         if isempty(subC)
             axis off;
             title(sprintf('%s 音源%d（データなし）', sub_label{s}, idx_sd));
             continue;
         end
-        plot(real(subC), imag(subC), '.', 'Color', sub_colors(s,:), 'MarkerSize', 3); hold on;
-        plot(real(qpsk_ideal), imag(qpsk_ideal), 'r+', 'MarkerSize', 12, 'LineWidth', 2); hold off;
+        plot(real(subC), imag(subC), '.', 'Color', sub_colors(s,:), 'MarkerSize', 4); hold on;
+        plot(real(qpsk_ideal), imag(qpsk_ideal), 'r+', 'MarkerSize', 16, 'LineWidth', 2.5); hold off;
         axis equal; grid on;
         lim = max(3, ceil(max(abs([real(subC); imag(subC)]))));
         xlim([-lim lim]); ylim([-lim lim]); xlabel('I'); ylabel('Q');
-        title(sprintf('%s 音源%d\nOSNR=%.1f dB, BER=%.3f', ...
-              sub_label{s}, idx_sd, SUB_OSNR(idx_sd,s), SUB_BER(idx_sd,s)));
+        title(sprintf('%s 音源%d   (Rs=%d baud)\nOSNR=%.1f dB, BER=%.3f', ...
+              sub_label{s}, idx_sd, Rs, SUB_OSNR(idx_sd,s), SUB_BER(idx_sd,s)), ...
+              'FontSize', 12);
     end
 end
-sgtitle(sprintf('距離群（サブアレイ）ごとの QPSK 星座図  (Rs=%d baud)', Rs), 'FontSize', 13, 'FontWeight', 'bold');
