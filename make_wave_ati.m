@@ -7,10 +7,11 @@
 % ============================================================
 
 %% ==== パラメータ（実環境に合わせて変更）====
-base_name = 'JamTank';   % .env / .arr のベース名（'JamTank.env'なら'JamTank'）
-H         = 0.5;         % 波高 peak-to-peak [m]（振幅は H/2）
-lambda    = 5.0;         % 波長 [m]
-R_max_m   = 120;         % 海面を定義する最大距離 [m]（受信機の最遠より少し広く）
+base_name = 'JamTank_Arr'; % .env / .arr のベース名（'JamTank_Arr.env'なら'JamTank_Arr'）
+                           % ★.atiはこの名前(JamTank_Arr.ati)でないとBellhopが読まない
+H         = 0.3;         % 波高 peak-to-peak [m]（水深6mの浅海なので0.2〜0.5が妥当）
+lambda    = 5.0;         % 波長 [m]（海面波の波長。100m区間に約20波）
+R_max_m   = 120;         % 海面を定義する最大距離 [m]（受信最遠100mより少し広く）
 pts_per_wl = 20;         % 1波長あたりの折れ線点数（形状の滑らかさ）
 n_snap    = 8;           % 時間スナップショット数（波の位相を等分割）
 interp    = 'C';         % 補間: 'L'=線形折れ線, 'C'=曲線(curvilinear/推奨)
