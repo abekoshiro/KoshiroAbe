@@ -109,7 +109,8 @@ for idx_sd = 1:Nsd
 
     %% 有意 lag の判定 → Nf/Nb 推奨
     rho_dB = 20*log10(abs(rho)/max(abs(rho))+eps);
-    sig = rho_dB > thr_dB;                 % 閾値超えの lag
+    sig = (rho_dB > thr_dB);               % 閾値超えの lag
+    sig = sig(:).';                        % lags(行ベクトル)と向きを揃える
     fwd_lags = lags(sig & lags<0);         % 前方（負lag）
     bwd_lags = lags(sig & lags>0);         % 後方（正lag）
     if isempty(fwd_lags), max_fwd = 0; else, max_fwd = max(abs(fwd_lags)); end
