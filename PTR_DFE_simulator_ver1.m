@@ -16,9 +16,19 @@ fprintf('ARR構成: 受信距離 %d点 × 受信深度 %d点 = %dch, 音源 %d�
 if isfield(Pos,'r')&&isfield(Pos.r,'r'), fprintf('  受信距離: '); fprintf('%.1f ',Pos.r.r); fprintf('m\n'); end
 if isfield(Pos,'r')&&isfield(Pos.r,'z'), fprintf('  受信深度: '); fprintf('%.2f ',Pos.r.z); fprintf('m\n\n'); end
 
-%% サブアレイ設定（距離ごと）
-NUM_SUB = Nrr; SUB_SIZE = Nrz;
-if NUM_SUB < 2, NUM_SUB = 2; SUB_SIZE = NUM_RX/NUM_SUB; end
+%% ch ⇔ (距離,深度) 対応
+ch_rr=zeros(NUM_RX,1); ch_rz=zeros(NUM_RX,1); cc=0;
+for irr=1:Nrr, for irz=1:Nrz, cc=cc+1; ch_rr(cc)=irr; ch_rz(cc)=irz; end, end
+
+%% サブアレイ分割とch→サブアレイ対応（距離が1つでも動くようにする）
+if Nrr >= 2
+    NUM_SUB = Nrr; SUB_SIZE = Nrz;   % 距離ごとに1サブアレイ
+    ch_sub  = ch_rr;
+else
+    NUM_SUB = 2; SUB_SIZE = ceil(NUM_RX/NUM_SUB);  % 単一距離：深度で2分割
+    ch_sub  = min(NUM_SUB, ceil((1:NUM_RX)'/SUB_SIZE));
+end
+fprintf('サブアレイ数 NUM_SUB=%d（距離%d, 深度%d）\n', NUM_SUB, Nrr, Nrz);
 
 %% ★DFEパラメータ（tap_length_diagnostic.m の推奨値に合わせる）
 Nf     = 8;       % フィードフォワードタップ数
@@ -32,10 +42,6 @@ PTR_OSNR=zeros(Nsd,1);      PTR_BER=zeros(Nsd,1);
 SCM_OSNR=zeros(Nsd,1);      SCM_BER=zeros(Nsd,1);
 SCMDFE_OSNR=zeros(Nsd,1);   SCMDFE_BER=zeros(Nsd,1);
 PTR_syms=cell(Nsd,1); SCM_syms=cell(Nsd,1); DFE_syms=cell(Nsd,1);
-
-%% ch ⇔ (距離,深度) 対応
-ch_rr=zeros(NUM_RX,1); ch_rz=zeros(NUM_RX,1); cc=0;
-for irr=1:Nrr, for irz=1:Nrz, cc=cc+1; ch_rr(cc)=irr; ch_rz(cc)=irz; end, end
 
 for idx_sd = 1:Nsd
 
@@ -80,9 +86,9 @@ for idx_sd = 1:Nsd
         Lz=min(length(z),ptr_buf_len); La=min(length(hac),ptr_buf_len);
         total_ptr(1:Lz)=total_ptr(1:Lz)+z(1:Lz);
         total_ac(1:La) =total_ac(1:La)+hac(1:La);
-        irr=ch_rr(ch);
-        sub_ptr(1:Lz,irr)=sub_ptr(1:Lz,irr)+z(1:Lz);
-        sub_ac(1:La,irr) =sub_ac(1:La,irr)+hac(1:La);
+        si=ch_sub(ch);
+        sub_ptr(1:Lz,si)=sub_ptr(1:Lz,si)+z(1:Lz);
+        sub_ac(1:La,si) =sub_ac(1:La,si)+hac(1:La);
     end
 
     %% --- 通常PTR ---

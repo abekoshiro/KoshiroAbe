@@ -13,11 +13,19 @@
 
 Nrr = size(Arr,1); Nrz = size(Arr,2); Nsd = size(Arr,3);
 NUM_RX = Nrr*Nrz;
-NUM_SUB = Nrr; SUB_SIZE = Nrz;
-if NUM_SUB < 2, NUM_SUB = 2; SUB_SIZE = NUM_RX/NUM_SUB; end
 
 ch_rr=zeros(NUM_RX,1); ch_rz=zeros(NUM_RX,1); cc=0;
 for irr=1:Nrr, for irz=1:Nrz, cc=cc+1; ch_rr(cc)=irr; ch_rz(cc)=irz; end, end
+
+%% サブアレイ分割とch→サブアレイ対応（距離が1つでも動くようにする）
+if Nrr >= 2
+    NUM_SUB = Nrr; SUB_SIZE = Nrz;   % 距離ごとに1サブアレイ
+    ch_sub  = ch_rr;                 % chの距離idx = サブアレイ番号
+else
+    NUM_SUB = 2; SUB_SIZE = ceil(NUM_RX/NUM_SUB);  % 単一距離：深度で2分割
+    ch_sub  = min(NUM_SUB, ceil((1:NUM_RX)'/SUB_SIZE));
+end
+fprintf('サブアレイ数 NUM_SUB=%d（距離%d, 深度%d）\n', NUM_SUB, Nrr, Nrz);
 
 Rs = 500; Sps = 16; Fs = Rs*Sps; numSymbols = 2000;
 
@@ -68,9 +76,9 @@ for idx_sd = 1:Nsd
         ds2=round(dl*Fs)+1; h=zeros(max(ds2),1); h(ds2)=amp;
         g=conj(flipud(h)); z=conv(rx,g); hac=conv(h,g);
         Lz=min(length(z),ptr_buf_len); La=min(length(hac),ptr_buf_len);
-        irr=ch_rr(ch);
-        sub_ptr(1:Lz,irr)=sub_ptr(1:Lz,irr)+z(1:Lz);
-        sub_ac(1:La,irr) =sub_ac(1:La,irr)+hac(1:La);
+        si=ch_sub(ch);
+        sub_ptr(1:Lz,si)=sub_ptr(1:Lz,si)+z(1:Lz);
+        sub_ac(1:La,si) =sub_ac(1:La,si)+hac(1:La);
     end
 
     %% SCM-MRC 合成（ver13と同じ）
@@ -104,8 +112,8 @@ for idx_sd = 1:Nsd
     sig = rho_dB > thr_dB;                 % 閾値超えの lag
     fwd_lags = lags(sig & lags<0);         % 前方（負lag）
     bwd_lags = lags(sig & lags>0);         % 後方（正lag）
-    max_fwd = isempty(fwd_lags)*0 + (~isempty(fwd_lags))*max(abs(fwd_lags));
-    max_bwd = isempty(bwd_lags)*0 + (~isempty(bwd_lags))*max(bwd_lags);
+    if isempty(fwd_lags), max_fwd = 0; else, max_fwd = max(abs(fwd_lags)); end
+    if isempty(bwd_lags), max_bwd = 0; else, max_bwd = max(bwd_lags);      end
 
     Nf_rec(idx_sd) = max_fwd + margin + 1;  % +1は現在タップ, marginは余裕
     Nb_rec(idx_sd) = max_bwd;
