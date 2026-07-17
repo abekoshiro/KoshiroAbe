@@ -42,6 +42,8 @@ PTR_OSNR=zeros(Nsd,1);      PTR_BER=zeros(Nsd,1);
 SCM_OSNR=zeros(Nsd,1);      SCM_BER=zeros(Nsd,1);
 SCMDFE_OSNR=zeros(Nsd,1);   SCMDFE_BER=zeros(Nsd,1);
 PTR_syms=cell(Nsd,1); SCM_syms=cell(Nsd,1); DFE_syms=cell(Nsd,1);
+RX_syms=cell(Nsd,NUM_RX);              % ★合成前：各受信機単体の生受信シンボル
+RX_OSNR=nan(Nsd,NUM_RX); RX_BER=nan(Nsd,NUM_RX);
 
 for idx_sd = 1:Nsd
 
@@ -79,6 +81,14 @@ for idx_sd = 1:Nsd
         end
         SNR_dB=20; sp=mean(abs(rxBase).^2); np=sp/10^(SNR_dB/10);
         rx=rxBase+sqrt(np/2)*(randn(size(rxBase))+1i*randn(size(rxBase)));
+
+        %% ★合成前：この受信機単体の生受信星座図（PTRなし・中央サンプリング）
+        so=round(Sps/2);
+        rxSym=rx(so:Sps:so+Sps*(numSymbols-1));
+        a1=(symbols'*rxSym)/(symbols'*symbols); rxc=rxSym/a1;
+        RX_syms{idx_sd,ch}=rxc;
+        RX_OSNR(idx_sd,ch)=10*log10(sigPower/mean(abs(symbols-rxc).^2));
+        RX_BER(idx_sd,ch)=ber_qpsk(symbols,rxc,bits);
 
         %% PTR個別
         ds2=round(dl*Fs)+1; h=zeros(max(ds2),1); h(ds2)=amp;
@@ -167,6 +177,33 @@ for idx_sd=1:Nsd
     title(sprintf('SCM+DFE 音源%d\nOSNR=%.1fdB BER=%.3f',idx_sd,SCMDFE_OSNR(idx_sd),SCMDFE_BER(idx_sd)));
 end
 sgtitle(sprintf('DFE等化の効果  (Nf=%d, Nb=%d, RLS λ=%.3f)',Nf,Nb,lambda),'FontSize',13,'FontWeight','bold');
+
+%% ★合成前：各受信機単体の生受信星座図（音源ごとに1枚）
+%   PTRも合成も通さない「そのまま復調」の星座図。合成でどれだけ改善したか比較用
+nc=ceil(sqrt(NUM_RX)); nr=ceil(NUM_RX/nc);
+for idx_sd=1:Nsd
+    figure('Name',sprintf('合成前 各受信機 星座図 音源%d',idx_sd), ...
+           'Position',[80+30*idx_sd, 80, 200*nc, 190*nr]);
+    for ch=1:NUM_RX
+        rxc=RX_syms{idx_sd,ch};
+        subplot(nr,nc,ch);
+        if isempty(rxc), axis off; title(sprintf('ch%d なし',ch)); continue; end
+        plot(real(rxc),imag(rxc),'.','Color',[0.4 0.4 0.9],'MarkerSize',2); hold on;
+        plot(real(qpsk_ideal),imag(qpsk_ideal),'r+','MarkerSize',8,'LineWidth',1.5); hold off;
+        axis equal; grid on;
+        lim=max(3,ceil(max(abs([real(rxc);imag(rxc)]))));
+        xlim([-lim lim]); ylim([-lim lim]);
+        % ラベル：距離・深度が取れれば表示
+        if isfield(Pos,'r')&&isfield(Pos.r,'r')&&isfield(Pos.r,'z')
+            lab=sprintf('%.0fm/%.2fm',Pos.r.r(ch_rr(ch)),Pos.r.z(ch_rz(ch)));
+        else
+            lab=sprintf('ch%d',ch);
+        end
+        title(sprintf('%s\nOSNR=%.1f BER=%.2f',lab,RX_OSNR(idx_sd,ch),RX_BER(idx_sd,ch)),'FontSize',8);
+    end
+    sgtitle(sprintf('合成前：各受信機単体の生受信星座図（音源%d, PTR/合成なし）',idx_sd), ...
+            'FontSize',12,'FontWeight','bold');
+end
 
 %% ================= ローカル関数 =================
 function out = rls_dfe(x, symbols, Nf, Nb, lambda, delta, Ntrain)
