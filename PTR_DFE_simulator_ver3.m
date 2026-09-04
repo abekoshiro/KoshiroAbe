@@ -45,6 +45,12 @@ SCM_O=zeros(Nsd,Ntrials);  SCM_B=zeros(Nsd,Ntrials);   % 全区間
 SCM_Ot=zeros(Nsd,Ntrials); SCM_Bt=zeros(Nsd,Ntrials);  % test区間
 DFE_O=zeros(Nsd,Ntrials);  DFE_B=zeros(Nsd,Ntrials);   % 全区間
 DFE_Ot=zeros(Nsd,Ntrials); DFE_Bt=zeros(Nsd,Ntrials);  % test区間
+% ★線形平均OSNR用：各試行の信号電力Ps・誤差電力Pe（線形）を保存
+PTR_Ps =zeros(Nsd,Ntrials); PTR_Pe =zeros(Nsd,Ntrials);
+SCM_Ps =zeros(Nsd,Ntrials); SCM_Pe =zeros(Nsd,Ntrials);   % 全区間
+SCM_Pst=zeros(Nsd,Ntrials); SCM_Pet=zeros(Nsd,Ntrials);   % test区間
+DFE_Ps =zeros(Nsd,Ntrials); DFE_Pe =zeros(Nsd,Ntrials);   % 全区間
+DFE_Pst=zeros(Nsd,Ntrials); DFE_Pet=zeros(Nsd,Ntrials);   % test区間
 SCM_syms=cell(Nsd,1); DFE_syms=cell(Nsd,1);            % 星座図（最終試行）
 
 Rs=500; Sps=16; Fs=Rs*Sps; numSymbols=2000;
@@ -101,7 +107,7 @@ for idx_sd = 1:Nsd
         %% 通常PTR
         [~,pk]=max(abs(total_ac)); off=pk+round(Sps/2)-1;
         ptrSym=total_ptr(off:Sps:off+Sps*(numSymbols-1));
-        [PTR_O(idx_sd,it),PTR_B(idx_sd,it)] = eval_region(symbols, ptrSym, all_idx);
+        [PTR_O(idx_sd,it),PTR_B(idx_sd,it),~,PTR_Ps(idx_sd,it),PTR_Pe(idx_sd,it)] = eval_region(symbols, ptrSym, all_idx);
 
         %% SCM-PTR
         scm=zeros(numSymbols,1); wsum=0;
@@ -114,13 +120,13 @@ for idx_sd = 1:Nsd
             scm=scm+ws*sc; wsum=wsum+ws;
         end
         scm=scm/wsum;
-        [SCM_O(idx_sd,it), SCM_B(idx_sd,it)]  = eval_region(symbols, scm, all_idx);
-        [SCM_Ot(idx_sd,it),SCM_Bt(idx_sd,it)] = eval_region(symbols, scm, test_idx);
+        [SCM_O(idx_sd,it), SCM_B(idx_sd,it), ~,SCM_Ps(idx_sd,it), SCM_Pe(idx_sd,it)]  = eval_region(symbols, scm, all_idx);
+        [SCM_Ot(idx_sd,it),SCM_Bt(idx_sd,it),~,SCM_Pst(idx_sd,it),SCM_Pet(idx_sd,it)] = eval_region(symbols, scm, test_idx);
 
         %% SCM-PTR + RLS-DFE
         dfe_out = rls_dfe(scm, symbols, Nf, Nb, lambda, delta, Ntrain);
-        [DFE_O(idx_sd,it), DFE_B(idx_sd,it)]  = eval_region(symbols, dfe_out, all_idx);
-        [DFE_Ot(idx_sd,it),DFE_Bt(idx_sd,it)] = eval_region(symbols, dfe_out, test_idx);
+        [DFE_O(idx_sd,it), DFE_B(idx_sd,it), ~,DFE_Ps(idx_sd,it), DFE_Pe(idx_sd,it)]  = eval_region(symbols, dfe_out, all_idx);
+        [DFE_Ot(idx_sd,it),DFE_Bt(idx_sd,it),~,DFE_Pst(idx_sd,it),DFE_Pet(idx_sd,it)] = eval_region(symbols, dfe_out, test_idx);
 
         %% 星座図用（最終試行のみ保存）
         if it==Ntrials
@@ -130,33 +136,36 @@ for idx_sd = 1:Nsd
     end % ◀ 試行ループ
 end % ◀ 音源ループ
 
-%% 平均±標準偏差の算出（試行方向 dim=2）
-m=@(X) mean(X,2); s=@(X) std(X,0,2);
+%% 集計関数（試行方向 dim=2）
+m =@(X) mean(X,2); s=@(X) std(X,0,2); md=@(X) median(X,2);
+% ★線形平均OSNR：各試行の誤差電力を平均してからdB化（Jensen上振れを排除）
+%   OSNR_lin = 10*log10( mean_trials(Psig) / mean_trials(Perr) )
+linO=@(Ps,Pe) 10*log10(mean(Ps,2)./mean(Pe,2));
 
 %% 結果出力
 disp('==========================================================================');
-fprintf(' Monte Carlo 平均（%d試行）  NUM_SUB=%d, Rs=%dbaud, DFE:Nf=%d Nb=%d Ntrain=%d\n', ...
+fprintf(' Monte Carlo（%d試行）  NUM_SUB=%d, Rs=%dbaud, DFE:Nf=%d Nb=%d Ntrain=%d\n', ...
         Ntrials, NUM_SUB, Rs, Nf, Nb, Ntrain);
-fprintf(' 表記: 平均 ± 標準偏差   [全]=全区間  [test]=判定指向区間\n');
+fprintf(' ★OSNRは「誤差電力を平均してからdB化」した線形平均値を主表示（保守的・物理的）\n');
+fprintf(' 参考: dB平均(Jensen上振れ) と 中央値 も併記。 [test]=判定指向区間\n');
 disp('==========================================================================');
 for idx_sd=1:Nsd
     fprintf('【音源 %d】\n', idx_sd);
-    fprintf('  通常PTR             : OSNR %5.2f ± %4.2f dB   BER %.4f ± %.4f\n', ...
-        m(PTR_O(idx_sd,:)), s(PTR_O(idx_sd,:)), m(PTR_B(idx_sd,:)), s(PTR_B(idx_sd,:)));
-    fprintf('  SCM-PTR      [全]   : OSNR %5.2f ± %4.2f dB   BER %.4f ± %.4f\n', ...
-        m(SCM_O(idx_sd,:)), s(SCM_O(idx_sd,:)), m(SCM_B(idx_sd,:)), s(SCM_B(idx_sd,:)));
-    fprintf('  SCM-PTR      [test] : OSNR %5.2f ± %4.2f dB   BER %.4f ± %.4f\n', ...
-        m(SCM_Ot(idx_sd,:)), s(SCM_Ot(idx_sd,:)), m(SCM_Bt(idx_sd,:)), s(SCM_Bt(idx_sd,:)));
-    fprintf('  SCM-PTR+DFE  [全]   : OSNR %5.2f ± %4.2f dB   BER %.4f ± %.4f\n', ...
-        m(DFE_O(idx_sd,:)), s(DFE_O(idx_sd,:)), m(DFE_B(idx_sd,:)), s(DFE_B(idx_sd,:)));
-    fprintf('  SCM-PTR+DFE  [test] : OSNR %5.2f ± %4.2f dB   BER %.4f ± %.4f\n', ...
-        m(DFE_Ot(idx_sd,:)), s(DFE_Ot(idx_sd,:)), m(DFE_Bt(idx_sd,:)), s(DFE_Bt(idx_sd,:)));
-    fprintf('  ── DFE改善量(test基準): ΔOSNR = %+.2f dB\n', m(DFE_Ot(idx_sd,:))-m(SCM_Ot(idx_sd,:)));
-    fprintf('  ── 過学習チェック(DFE 全−test): %+.2f dB\n\n', m(DFE_O(idx_sd,:))-m(DFE_Ot(idx_sd,:)));
+    fprintf('  通常PTR             : OSNR(線形平均) %6.2f dB   [dB平均 %5.2f / 中央値 %5.2f]  BER %.4f\n', ...
+        linO(PTR_Ps(idx_sd,:),PTR_Pe(idx_sd,:)), m(PTR_O(idx_sd,:)), md(PTR_O(idx_sd,:)), m(PTR_B(idx_sd,:)));
+    fprintf('  SCM-PTR      [全]   : OSNR(線形平均) %6.2f dB   [dB平均 %5.2f / 中央値 %5.2f]  BER %.4f\n', ...
+        linO(SCM_Ps(idx_sd,:),SCM_Pe(idx_sd,:)), m(SCM_O(idx_sd,:)), md(SCM_O(idx_sd,:)), m(SCM_B(idx_sd,:)));
+    fprintf('  SCM-PTR      [test] : OSNR(線形平均) %6.2f dB   [dB平均 %5.2f / 中央値 %5.2f]  BER %.4f\n', ...
+        linO(SCM_Pst(idx_sd,:),SCM_Pet(idx_sd,:)), m(SCM_Ot(idx_sd,:)), md(SCM_Ot(idx_sd,:)), m(SCM_Bt(idx_sd,:)));
+    fprintf('  SCM-PTR+DFE  [全]   : OSNR(線形平均) %6.2f dB   [dB平均 %5.2f / 中央値 %5.2f]  BER %.4f\n', ...
+        linO(DFE_Ps(idx_sd,:),DFE_Pe(idx_sd,:)), m(DFE_O(idx_sd,:)), md(DFE_O(idx_sd,:)), m(DFE_B(idx_sd,:)));
+    fprintf('  SCM-PTR+DFE  [test] : OSNR(線形平均) %6.2f dB   [dB平均 %5.2f / 中央値 %5.2f]  BER %.4f\n', ...
+        linO(DFE_Pst(idx_sd,:),DFE_Pet(idx_sd,:)), m(DFE_Ot(idx_sd,:)), md(DFE_Ot(idx_sd,:)), m(DFE_Bt(idx_sd,:)));
+    dfe_gain = linO(DFE_Pst(idx_sd,:),DFE_Pet(idx_sd,:)) - linO(SCM_Pst(idx_sd,:),SCM_Pet(idx_sd,:));
+    fprintf('  ── DFE改善量(線形平均, test基準): ΔOSNR = %+.2f dB\n\n', dfe_gain);
 end
 
-%% 収束の目安：標準偏差 / √Ntrials ≒ 平均値の標準誤差
-fprintf('（平均値の標準誤差 ≒ 標準偏差/√%d。誤差が十分小さくなければ Ntrials を増やす）\n', Ntrials);
+fprintf('（線形平均 vs dB平均の差 = Jensen上振れ。差が大きいほど試行ごとのばらつき大）\n');
 
 %% 星座図（最終試行, test区間の平均OSNRをタイトルに併記）
 qpsk_ideal=[1+1i,1-1i,-1+1i,-1-1i];
@@ -168,23 +177,25 @@ for idx_sd=1:Nsd
     plot(real(qpsk_ideal),imag(qpsk_ideal),'r+','MarkerSize',12,'LineWidth',2); hold off;
     axis equal; grid on; lim=max(3,ceil(max(abs([real(scmC);imag(scmC)]))));
     xlim([-lim lim]); ylim([-lim lim]); xlabel('I'); ylabel('Q');
-    title(sprintf('SCM-PTR 音源%d\ntest OSNR=%.1f±%.1fdB',idx_sd,m(SCM_Ot(idx_sd,:)),s(SCM_Ot(idx_sd,:))));
+    title(sprintf('SCM-PTR 音源%d\ntest OSNR(線形)=%.1fdB (±%.1f)',idx_sd,linO(SCM_Pst(idx_sd,:),SCM_Pet(idx_sd,:)),s(SCM_Ot(idx_sd,:))));
 
     subplot(2,Nsd,Nsd+idx_sd);
     plot(real(dfeC),imag(dfeC),'.','Color',[0.85 0.3 0.1],'MarkerSize',3); hold on;
     plot(real(qpsk_ideal),imag(qpsk_ideal),'r+','MarkerSize',12,'LineWidth',2); hold off;
     axis equal; grid on; lim=max(3,ceil(max(abs([real(dfeC);imag(dfeC)]))));
     xlim([-lim lim]); ylim([-lim lim]); xlabel('I'); ylabel('Q');
-    title(sprintf('SCM+DFE 音源%d\ntest OSNR=%.1f±%.1fdB',idx_sd,m(DFE_Ot(idx_sd,:)),s(DFE_Ot(idx_sd,:))));
+    title(sprintf('SCM+DFE 音源%d\ntest OSNR(線形)=%.1fdB (±%.1f)',idx_sd,linO(DFE_Pst(idx_sd,:),DFE_Pet(idx_sd,:)),s(DFE_Ot(idx_sd,:))));
 end
 sgtitle(sprintf('DFE等化（%d試行平均, test区間OSNR） Nf=%d Nb=%d',Ntrials,Nf,Nb),'FontSize',13,'FontWeight','bold');
 
 %% ================= ローカル関数 =================
-function [osnr, ber, comp] = eval_region(symbols, raw, idx)
+function [osnr, ber, comp, psig, perr] = eval_region(symbols, raw, idx)
     s = symbols(idx); r = raw(idx);
     a = (s'*r)/(s'*s);
     c = r / a;
-    osnr = 10*log10(mean(abs(s).^2)/mean(abs(s-c).^2));
+    psig = mean(abs(s).^2);              % 信号電力（線形）
+    perr = mean(abs(s-c).^2);            % 残留誤差電力（線形）
+    osnr = 10*log10(psig/perr);          % この試行のOSNR(dB)
     dec = [real(c)>0, imag(c)>0];
     ref = [real(s)>0, imag(s)>0];
     ber = mean(dec(:) ~= ref(:));
