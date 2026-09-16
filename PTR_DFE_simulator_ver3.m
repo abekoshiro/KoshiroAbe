@@ -29,11 +29,13 @@ end
 fprintf('サブアレイ数 NUM_SUB=%d（距離%d, 深度%d）\n', NUM_SUB, Nrr, Nrz);
 
 %% ★DFEパラメータ
-Nf     = 8;
-Nb     = 6;
+% ★Rs=5000baudでは遅延広がりが約10倍のシンボルに及ぶため、タップも大幅に増やす
+%   実値は tap_length_diagnostic(Rs=5000) の推奨に合わせること
+Nf     = 60;      % フィードフォワード（前方=プリカーサISI。PTRのq関数は対称なので重要）
+Nb     = 40;      % フィードバック（後方=ポストカーサISI）
 lambda = 0.999;
 delta  = 0.01;
-Ntrain = 400;
+Ntrain = 800;     % タップ増に合わせ訓練も増（目安 Ntrain≳数×(Nf+Nb)）
 
 %% ★Monte Carlo 設定
 Ntrials = 30;     % 試行回数（多いほど平均が安定。目安20〜50）
@@ -53,7 +55,7 @@ DFE_Ps =zeros(Nsd,Ntrials); DFE_Pe =zeros(Nsd,Ntrials);   % 全区間
 DFE_Pst=zeros(Nsd,Ntrials); DFE_Pet=zeros(Nsd,Ntrials);   % test区間
 SCM_syms=cell(Nsd,1); DFE_syms=cell(Nsd,1);            % 星座図（最終試行）
 
-Rs=500; Sps=16; Fs=Rs*Sps; numSymbols=2000;
+Rs=5000; Sps=16; Fs=Rs*Sps; numSymbols=2000;   % ★Rs=5kbaud（帯域相当）。Fs=80kHz
 
 for idx_sd = 1:Nsd
 

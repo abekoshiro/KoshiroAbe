@@ -27,10 +27,10 @@ else
 end
 fprintf('サブアレイ数 NUM_SUB=%d（距離%d, 深度%d）\n', NUM_SUB, Nrr, Nrz);
 
-Rs = 500; Sps = 16; Fs = Rs*Sps; numSymbols = 2000;
+Rs = 5000; Sps = 16; Fs = Rs*Sps; numSymbols = 2000;   % ★Rs=5kbaudに合わせる
 
 %% ==== 診断パラメータ ====
-Lmax   = 30;         % 調べる最大 lag（シンボル）
+Lmax   = 80;         % 調べる最大 lag（シンボル）※Rs増でISIが広がるため拡大
 thr_dB = -20;        % 有意サイドローブの閾値（ピーク比 dB）。-20dB=10%
 margin = 3;          % FF に加える余裕タップ
 
