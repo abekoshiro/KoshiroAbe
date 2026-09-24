@@ -77,23 +77,25 @@ for idx_sd=1:Nsd
             sub_ptr(1:Lz,si)=sub_ptr(1:Lz,si)+z(1:Lz); sub_ac(1:La,si)=sub_ac(1:La,si)+hac(1:La);
         end
 
-        %% 各ビームを焦点でサンプリング（α補正前の生ビーム）
+        %% 各ビームを焦点でサンプリングし、複素利得で正規化（RLSの数値安定化に必須）
         X=zeros(numSymbols,K_SUB); valid=false(K_SUB,1); err_beam=zeros(K_SUB,1);
         for s=1:K_SUB
             if all(sub_ac(:,s)==0), continue; end
             [~,pks]=max(abs(sub_ac(:,s))); off=pks+round(Sps/2)-1;
             if off+Sps*(numSymbols-1)>ptr_buf_len, continue; end
             beam=sub_ptr(off:Sps:off+Sps*(numSymbols-1),s);
-            X(:,s)=beam; valid(s)=true;
-            a=(symbols'*beam)/(symbols'*symbols); err_beam(s)=mean(abs(symbols-beam/a).^2);
+            a=(symbols'*beam)/(symbols'*symbols);          % 複素利得
+            if abs(a)<eps || any(~isfinite(beam)), continue; end
+            X(:,s)=beam/a;                                 % ★正規化（〜単位振幅シンボル）
+            valid(s)=true; err_beam(s)=mean(abs(symbols-X(:,s)).^2);
         end
         X=X(:,valid); err_beam=err_beam(valid); Kv=size(X,2);
+        if Kv==0, continue; end
 
-        %% --- 参考: SCM-MRC合成 → 単一DFE ---
+        %% --- 参考: SCM-MRC合成 → 単一DFE ---（ビームは正規化済み）
         scm=zeros(numSymbols,1); wsum=0;
         for k=1:Kv
-            a=(symbols'*X(:,k))/(symbols'*symbols); sc=X(:,k)/a;
-            w=1/err_beam(k); scm=scm+w*sc; wsum=wsum+w;
+            w=1/err_beam(k); scm=scm+w*X(:,k); wsum=wsum+w;
         end
         scm=scm/wsum;
         scm_dfe=rls_dfe(scm,symbols,Nf*Kv,Nb,lambda,delta,Ntrain);   % 単一DFE(タップ総数を公平化)
