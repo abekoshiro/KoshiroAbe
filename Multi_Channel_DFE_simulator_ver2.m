@@ -110,8 +110,8 @@ for idx_sd=1:Nsd
         for s=1:K_SUB
             if all(sub_ac(:,s)==0), continue; end
             [~,pk]=max(abs(sub_ac(:,s)));
-            center=pk+gd;                 % 受信整合RRCの群遅延を考慮した概略焦点
-            beam=find_sample(sub_ptr(:,s),center,Sps,numSymbols,symbols,2*Sps);
+            % 焦点はq関数ピークからRRC群遅延(送受×2)ぶん後方 → 広域を粗→微で探索
+            beam=find_sample(sub_ptr(:,s),pk,Sps,numSymbols,symbols,3*gd+4*Sps);
             if isempty(beam), continue; end
             a=(symbols'*beam)/(symbols'*symbols);
             if abs(a)<eps||any(~isfinite(beam)), continue; end
@@ -168,17 +168,29 @@ end
 sgtitle(sprintf('RRC導入版（α=%.2f, K=%d, Nf=%d/ch, Nb=%d, Rs=%d）',alpha,K_SUB,Nf,Nb,Rs),'FontWeight','bold');
 
 %% ================= ローカル関数 =================
-function sym = find_sample(sig, center, Sps, numSymbols, symbols, srch)
-% 焦点近傍でオフセットを微調し、送信シンボルと最も相関する点でサンプリング
-    best=-inf; sym=[];
-    for d=-srch:srch
-        off=center+d; idx=off+(0:numSymbols-1)*Sps;
+function sym = find_sample(sig, start, Sps, numSymbols, symbols, maxoff)
+% 焦点を粗→微の2段で探索し、送信シンボルと最も相関する点でサンプリング
+%  群遅延（RRC送受）により焦点が start から広く後方にずれるため広域探索
+    % --- 粗探索（Sps刻みで symbol整合の当たりを付ける）---
+    bestd=0; best=-inf;
+    for d=0:Sps:maxoff
+        o=start+d; idx=o+(0:numSymbols-1)*Sps;
         if idx(1)<1||idx(end)>length(sig), continue; end
-        cand=sig(idx); g0=(symbols'*cand)/(symbols'*symbols);
-        if abs(g0)<eps, continue; end
-        cc=cand/g0; osnr=sum(abs(symbols).^2)/sum(abs(symbols-cc).^2);
-        if osnr>best, best=osnr; sym=cand; end
+        v=osnr_of(sig(idx),symbols); if v>best, best=v; bestd=d; end
     end
+    % --- 微探索（±Sps を1刻み）---
+    sym=[]; best=-inf;
+    for d=bestd-Sps:bestd+Sps
+        o=start+d; idx=o+(0:numSymbols-1)*Sps;
+        if idx(1)<1||idx(end)>length(sig), continue; end
+        cand=sig(idx); v=osnr_of(cand,symbols); if v>best, best=v; sym=cand; end
+    end
+end
+
+function v = osnr_of(cand, symbols)
+    g0=(symbols'*cand)/(symbols'*symbols);
+    if abs(g0)<eps, v=-inf; return; end
+    cc=cand/g0; v=sum(abs(symbols).^2)/max(sum(abs(symbols-cc).^2),eps);
 end
 
 function out = mc_dfe(X, symbols, Nf, Nb, lambda, delta, Ntrain, mu_pll)
