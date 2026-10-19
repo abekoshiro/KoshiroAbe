@@ -40,6 +40,13 @@ for irr=1:Nrr, for irz=1:Nrz, cc=cc+1; ch_rr(cc)=irr; ch_rz(cc)=irz; end, end
 
 %% ==== RRCフィルタ（送信・受信整合で共用）====
 rrc = rrc_time_domain(Rs, Ncycle, alpha, Fs);   % 提供関数
+% ★特異点 t=±Ts/(4α) で浮動小数点判定が外れInf/NaNになる場合を閉形式値で補修
+bad = ~isfinite(rrc);
+if any(bad)
+    val = alpha/sqrt(2)*((1+2/pi)*sin(pi/(4*alpha))+(1-2/pi)*cos(pi/(4*alpha)));
+    rrc(bad) = val;
+    fprintf('  （RRC特異点 %d 点を閉形式値 %.4f で補修）\n', nnz(bad), val);
+end
 rrc = rrc(:) / sqrt(sum(abs(rrc).^2));          % エネルギー正規化
 gd  = Ncycle*Sps;                               % RRC群遅延[サンプル]
 
