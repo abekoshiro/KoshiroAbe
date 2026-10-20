@@ -121,12 +121,17 @@ for idx_sd=1:Nsd
         if Kv==0, continue; end
         ti=(Ntrain+1):numSymbols;
 
-        %% 参考: SCM-MRC → 単一DFE
+        %% 参考: SCM-MRC → 単一DFE（従来型）
         scm=zeros(numSymbols,1); wsum=0;
         for k=1:Kv, w=1/err_beam(k); scm=scm+w*X(:,k); wsum=wsum+w; end
         scm=scm/wsum;
-        scm_dfe=rls_dfe(scm,symbols,Nf*Kv,Nb,lambda,delta,Ntrain);
-        [~,SCM_B(idx_sd,it),cS,SCM_Ps(idx_sd,it),SCM_Pe(idx_sd,it)]=eval_region(symbols,scm_dfe,ti);
+        %  ※単一ストリームにNf*Kvタップは過大で発散するため、等倍Nf/Nbを使用
+        scm_dfe=rls_dfe(scm,symbols,Nf,Nb,lambda,delta,Ntrain);
+        if all(isfinite(scm_dfe))
+            [~,SCM_B(idx_sd,it),cS,SCM_Ps(idx_sd,it),SCM_Pe(idx_sd,it)]=eval_region(symbols,scm_dfe,ti);
+        else
+            SCM_Ps(idx_sd,it)=1; SCM_Pe(idx_sd,it)=1; SCM_B(idx_sd,it)=0.5; cS=zeros(numSymbols,1); % 発散→OSNR0dB相当
+        end
 
         %% 本命: マルチチャネルDFE
         mc_out=mc_dfe(X,symbols,Nf,Nb,lambda,delta,Ntrain,mu_pll);
