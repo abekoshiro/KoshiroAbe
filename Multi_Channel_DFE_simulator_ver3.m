@@ -20,7 +20,8 @@ fprintf('ARR: 距離%d × 深度%d = %dch, 音源%d\n', Nrr,Nrz,NUM_RX,Nsd);
 %% ==== 信号パラメータ ====
 Rs=5000; Sps=16; Fs=Rs*Sps; numSymbols=2000;   % BW=Rs, Fs=80kHz
 alpha  = 0.25;    % ロールオフ率
-Ncycle = 20;      % RRCスパン
+Ncycle = 20;      % RRCスパン（基本値）
+Ncycle = max(Ncycle, ceil(4.5/alpha));   % ★低αでは自動拡張（α=0.15→30）。裾切断ISIを抑制
 SNR_dB = 20;      % 帯域内SNR
 Lfrac  = 16;      % ★分数遅延sincの半長（大きいほど正確, 重い）
 
@@ -124,7 +125,11 @@ for idx_sd=1:Nsd
 
         %% 本命: マルチチャネルDFE
         mc_out=mc_dfe(X,symbols,Nf,Nb,lambda,delta,Ntrain,mu_pll);
-        [~,MC_B(idx_sd,it),cM,MC_Ps(idx_sd,it),MC_Pe(idx_sd,it)]=eval_region(symbols,mc_out,ti);
+        if all(isfinite(mc_out))
+            [~,MC_B(idx_sd,it),cM,MC_Ps(idx_sd,it),MC_Pe(idx_sd,it)]=eval_region(symbols,mc_out,ti);
+        else
+            MC_Ps(idx_sd,it)=1; MC_Pe(idx_sd,it)=1; MC_B(idx_sd,it)=0.5; cM=zeros(numSymbols,1); % 発散→OSNR0dB相当
+        end
 
         if it==Ntrials, SCM_syms{idx_sd}=cS; MC_syms{idx_sd}=cM; end
     end
