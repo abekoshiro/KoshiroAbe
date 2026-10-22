@@ -106,7 +106,11 @@ for idx_sd=1:Nsd
             if isempty(beam), continue; end
             a=(symbols'*beam)/(symbols'*symbols);
             if abs(a)<eps||any(~isfinite(beam)), continue; end
-            X(:,s)=beam/a; valid(s)=true; err_beam(s)=mean(abs(symbols-X(:,s)).^2);
+            eb=mean(abs(symbols-beam/a).^2);
+            % ★焦点ロック失敗ビーム(誤差大)は除外 → RLSの発散を防止
+            if eb < 1
+                X(:,s)=beam/a; valid(s)=true; err_beam(s)=eb;
+            end
         end
         X=X(:,valid); err_beam=err_beam(valid); Kv=size(X,2);
         if Kv==0, continue; end
