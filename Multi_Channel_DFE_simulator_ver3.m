@@ -135,7 +135,7 @@ for idx_sd=1:Nsd
             MC_Ps(idx_sd,it)=1; MC_Pe(idx_sd,it)=1; MC_B(idx_sd,it)=0.5; cM=zeros(numSymbols,1); % 発散→OSNR0dB相当
         end
 
-        if it==Ntrials, SCM_syms{idx_sd}=cS; MC_syms{idx_sd}=cM; end
+        SCM_syms{idx_sd}=cS; MC_syms{idx_sd}=cM;   % 成功試行ごとに更新（最後の成功を保持）
     end
 end
 
@@ -163,20 +163,29 @@ qpsk=[1+1i,1-1i,-1+1i,-1-1i];
 figure('Name','分数遅延版: SCM vs MC-DFE','Position',[100 100 300*Nsd 560]);
 for idx_sd=1:Nsd
     oS=linO(SCM_Ps(idx_sd,:),SCM_Pe(idx_sd,:)); oM=linO(MC_Ps(idx_sd,:),MC_Pe(idx_sd,:));
+    vS=SCM_syms{idx_sd}; if isempty(vS)||~any(isfinite(vS)), vS=zeros(4,1); end
+    vM=MC_syms{idx_sd};  if isempty(vM)||~any(isfinite(vM)), vM=zeros(4,1); end
     subplot(2,Nsd,idx_sd);
-    plot(real(SCM_syms{idx_sd}),imag(SCM_syms{idx_sd}),'.','Color',[0.1 0.6 0.9],'MarkerSize',3); hold on;
+    plot(real(vS),imag(vS),'.','Color',[0.1 0.6 0.9],'MarkerSize',3); hold on;
     plot(real(qpsk),imag(qpsk),'r+','MarkerSize',12,'LineWidth',2); axis equal; grid on;
-    lim=max(3,ceil(max(abs([real(SCM_syms{idx_sd});imag(SCM_syms{idx_sd})])))); xlim([-lim lim]); ylim([-lim lim]);
+    lim=safelim(vS); xlim([-lim lim]); ylim([-lim lim]);
     title(sprintf('SCM+単一DFE 音源%d\nOSNR=%.1fdB',idx_sd,oS));
     subplot(2,Nsd,Nsd+idx_sd);
-    plot(real(MC_syms{idx_sd}),imag(MC_syms{idx_sd}),'.','Color',[0.85 0.3 0.1],'MarkerSize',3); hold on;
+    plot(real(vM),imag(vM),'.','Color',[0.85 0.3 0.1],'MarkerSize',3); hold on;
     plot(real(qpsk),imag(qpsk),'r+','MarkerSize',12,'LineWidth',2); axis equal; grid on;
-    lim=max(3,ceil(max(abs([real(MC_syms{idx_sd});imag(MC_syms{idx_sd})])))); xlim([-lim lim]); ylim([-lim lim]);
+    lim=safelim(vM); xlim([-lim lim]); ylim([-lim lim]);
     title(sprintf('マルチチャネルDFE 音源%d\nOSNR=%.1fdB',idx_sd,oM));
 end
 sgtitle(sprintf('分数遅延版（α=%.2f, Lfrac=%d, K=%d, Nf=%d/ch, Nb=%d, Rs=%d）',alpha,Lfrac,K_SUB,Nf,Nb,Rs),'FontWeight','bold');
 
 %% ================= ローカル関数 =================
+function L = safelim(v)
+% 星座図の軸範囲を安全に算出（空/NaN/Infでも必ず有限値を返す）
+    a = abs([real(v(:)); imag(v(:))]);
+    a = a(isfinite(a));
+    if isempty(a), L = 3; else, L = max(3, ceil(max(a))); end
+end
+
 function h = build_cir_frac(amp, cs, Lh, L)
 % 分数遅延CIR：各パスを窓付きsincで小数サンプル位置 cs(p) に配置
     h=zeros(Lh,1);
