@@ -144,11 +144,18 @@ linO=@(Ps,Pe) 10*log10(mean(Ps,2)./mean(Pe,2)); mB=@(B) mean(B,2);
 disp('==========================================================================');
 fprintf(' 分数遅延版: SCM+単一DFE vs マルチチャネルDFE（%d試行, Rs=%d, α=%.2f, Lfrac=%d）\n', Ntrials,Rs,alpha,Lfrac);
 disp('==========================================================================');
+fprintf(' 表記: 線形平均 / 中央値 / 失敗率（OSNR<%ddBの試行割合）\n', 10);
 for idx_sd=1:Nsd
     oS=linO(SCM_Ps(idx_sd,:),SCM_Pe(idx_sd,:)); oM=linO(MC_Ps(idx_sd,:),MC_Pe(idx_sd,:));
+    % 各試行のOSNR → 中央値・失敗率
+    sT=10*log10(SCM_Ps(idx_sd,:)./SCM_Pe(idx_sd,:));
+    mT=10*log10(MC_Ps(idx_sd,:)./MC_Pe(idx_sd,:));
+    thr=10;   % 失敗判定しきい値 [dB]
     fprintf('【音源%d】\n',idx_sd);
-    fprintf('  SCM-MRC + 単一DFE : OSNR %6.2f dB   BER %.4f\n', oS, mB(SCM_B(idx_sd,:)));
-    fprintf('  マルチチャネルDFE : OSNR %6.2f dB   BER %.4f   （改善 %+.2f dB）\n\n', oM, mB(MC_B(idx_sd,:)), oM-oS);
+    fprintf('  SCM-MRC + 単一DFE : 線形平均 %6.2f / 中央値 %6.2f dB   失敗率 %3.0f%%   BER %.4f\n', ...
+            oS, median(sT), mean(sT<thr)*100, mB(SCM_B(idx_sd,:)));
+    fprintf('  マルチチャネルDFE : 線形平均 %6.2f / 中央値 %6.2f dB   失敗率 %3.0f%%   BER %.4f   （改善 %+.2f dB）\n\n', ...
+            oM, median(mT), mean(mT<thr)*100, mB(MC_B(idx_sd,:)), oM-oS);
 end
 
 %% ==== 星座図 ====
