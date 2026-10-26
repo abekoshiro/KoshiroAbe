@@ -108,12 +108,18 @@ for idx_sd=1:Nsd
             if abs(a)<eps||any(~isfinite(beam)), continue; end
             eb=mean(abs(symbols-beam/a).^2);
             % ★焦点ロック失敗ビーム(誤差大)は除外 → RLSの発散を防止
-            if eb < 1
+            % ★ロック失敗ビーム(誤差大)のみ除外。使える弱ビームは残す（受信機少で捨てすぎ防止）
+            if eb < 3
                 X(:,s)=beam/a; valid(s)=true; err_beam(s)=eb;
             end
         end
         X=X(:,valid); err_beam=err_beam(valid); Kv=size(X,2);
-        if Kv==0, continue; end
+        % 有効ビームが無い試行は「失敗」として記録（NaNにしない）
+        if Kv==0
+            SCM_Ps(idx_sd,it)=1; SCM_Pe(idx_sd,it)=1e3; SCM_B(idx_sd,it)=0.5;
+            MC_Ps(idx_sd,it)=1;  MC_Pe(idx_sd,it)=1e3;  MC_B(idx_sd,it)=0.5;
+            continue;
+        end
         ti=(Ntrain+1):numSymbols;
 
         %% 参考: SCM-MRC → 単一DFE
@@ -153,9 +159,9 @@ for idx_sd=1:Nsd
     thr=10;   % 失敗判定しきい値 [dB]
     fprintf('【音源%d】\n',idx_sd);
     fprintf('  SCM-MRC + 単一DFE : 線形平均 %6.2f / 中央値 %6.2f dB   失敗率 %3.0f%%   BER %.4f\n', ...
-            oS, median(sT), mean(sT<thr)*100, mB(SCM_B(idx_sd,:)));
+            oS, median(sT,'omitnan'), mean(sT<thr|isnan(sT))*100, mB(SCM_B(idx_sd,:)));
     fprintf('  マルチチャネルDFE : 線形平均 %6.2f / 中央値 %6.2f dB   失敗率 %3.0f%%   BER %.4f   （改善 %+.2f dB）\n\n', ...
-            oM, median(mT), mean(mT<thr)*100, mB(MC_B(idx_sd,:)), oM-oS);
+            oM, median(mT,'omitnan'), mean(mT<thr|isnan(mT))*100, mB(MC_B(idx_sd,:)), oM-oS);
 end
 
 %% ==== 星座図 ====
