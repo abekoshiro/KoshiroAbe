@@ -1,0 +1,290 @@
+%% ============================================================
+%  Multi_Channel_DFE_simulator_ver5.m
+%  ver3（RLS版）に【学習後の係数凍結 (training-freeze RLS)】を追加した版。
+%
+%  動機（失敗試行診断 dfe_failure_diagnostic.m の結果より）:
+%   ・RLSは学習区間(n<=Ntrain)では成功・失敗とも約-33dBまで綺麗に収束する。
+%   ・失敗は n=Ntrain を越えて判定帰還(decision-directed)に移った瞬間に発生:
+%       誤判定 → その誤りを正解とみなしてRLSが過剰適応 → ‖w‖ が爆発 → 発散。
+%   ・水槽/浅海の実験チャネルは測定区間内では時不変 → 学習後に係数を
+%     動かし続ける必要がない。そこで学習終了後は w, P を固定し、
+%     誤判定による過剰適応ループを断ち切る。
+%
+%  ★ver3との違い（mc_dfe / rls_dfe の中だけ）:
+%     n<=Ntrain : 既知シンボルで w, P を更新（従来通りRLS学習）
+%     n> Ntrain : w, P を凍結（更新しない）。
+%                 帰還バッファ fb は判定値 d で更新し続け、
+%                 PLL位相 theta も追従させ続ける（緩やかな位相ドリフトは吸収）。
+%   → 学習時の高性能(~36dB)を維持しつつ、約10%の失敗（発散）を除去する狙い。
+%
+%  （代替案）λ→1 に近づけて実質的に適応を止める手もあるが、
+%    判定誤りの影響を完全には断てない。明示的な凍結の方が確実。
+%
+%  他はver3を踏襲: 送信RRC整形 / sinc分数遅延CIR / 受信整合RRC /
+%                  帯域内SNR / サブアレイPTR焦点整列。
+%  依存: rrc_time_domain.m
+% ============================================================
+arr_file = 'JamTank_Arr_ver3.arr';    % ★使用中のARRに合わせる
+[Arr, Pos] = read_arrivals_asc(arr_file);
+Nrr=size(Arr,1); Nrz=size(Arr,2); Nsd=size(Arr,3); NUM_RX=Nrr*Nrz;
+fprintf('ARR: 距離%d × 深度%d = %dch, 音源%d\n', Nrr,Nrz,NUM_RX,Nsd);
+
+%% ==== 信号パラメータ ====
+Rs=5000; Sps=16; Fs=Rs*Sps; numSymbols=2000;   % BW=Rs, Fs=80kHz
+alpha  = 0.25;    % ロールオフ率
+Ncycle = 20;      % RRCスパン（基本値）
+Ncycle = max(Ncycle, ceil(4.5/alpha));   % ★低αでは自動拡張（α=0.15→30）。裾切断ISIを抑制
+SNR_dB = 20;      % 帯域内SNR
+Lfrac  = 16;      % ★分数遅延sincの半長（大きいほど正確, 重い）
+
+%% ==== サブアレイ・DFE ====
+K_SUB = min(8, NUM_RX);
+ch_sub = min(K_SUB, ceil((1:NUM_RX)'/ceil(NUM_RX/K_SUB)))';
+Nf=20; Nb=15; lambda=0.999; delta=0.01; mu_pll=0.01; Ntrain=600;
+Ntrials = 10;
+FREEZE = true;    % ★学習後に係数を凍結（ver5の肝）。falseにすると ver3 と同一挙動
+
+fprintf('RRC α=%.2f Ncycle=%d | 分数遅延Lfrac=%d | K=%d Nf=%d/ch Nb=%d | Rs=%d %d試行\n', ...
+        alpha,Ncycle,Lfrac,K_SUB,Nf,Nb,Rs,Ntrials);
+fprintf('★学習後係数凍結 FREEZE=%d（Ntrain=%d 以降は w,P 固定, fb/PLLは追従）\n\n', FREEZE,Ntrain);
+
+ch_rr=zeros(NUM_RX,1); ch_rz=zeros(NUM_RX,1); cc=0;
+for irr=1:Nrr, for irz=1:Nrz, cc=cc+1; ch_rr(cc)=irr; ch_rz(cc)=irz; end, end
+
+%% ==== RRC（送受共用）====
+rrc = rrc_time_domain(Rs, Ncycle, alpha, Fs);
+bad=~isfinite(rrc);
+if any(bad)
+    val=alpha/sqrt(2)*((1+2/pi)*sin(pi/(4*alpha))+(1-2/pi)*cos(pi/(4*alpha)));
+    rrc(bad)=val; fprintf('  （RRC特異点 %d 点を補修）\n',nnz(bad));
+end
+rrc=rrc(:)/sqrt(sum(abs(rrc).^2)); gd=Ncycle*Sps;
+
+SCM_Ps=zeros(Nsd,Ntrials); SCM_Pe=zeros(Nsd,Ntrials); SCM_B=zeros(Nsd,Ntrials);
+MC_Ps =zeros(Nsd,Ntrials); MC_Pe =zeros(Nsd,Ntrials); MC_B =zeros(Nsd,Ntrials);
+SCM_syms=cell(Nsd,1); MC_syms=cell(Nsd,1);
+
+for idx_sd=1:Nsd
+    %% 共通最小遅延・共通CIR長（分数遅延の裾を考慮して Lfrac 分の余裕）
+    gmin=inf; Lmax=0;
+    for ch=1:NUM_RX
+        d=real(Arr(ch_rr(ch),ch_rz(ch),idx_sd).delay); d=d(d>0);
+        if ~isempty(d), gmin=min(gmin,min(d)); end
+    end
+    for ch=1:NUM_RX
+        d=real(Arr(ch_rr(ch),ch_rz(ch),idx_sd).delay); d=d(d>0)-gmin; d=d(d>=0);
+        if ~isempty(d), Lmax=max(Lmax, round(max(d)*Fs)+1); end
+    end
+    Lh = Lmax + 2*Lfrac + 4;      % 共通CIR長
+
+    for it=1:Ntrials
+        %% 送信 QPSK → RRC
+        bits=randi([0 1],2*numSymbols,1);
+        symbols=(2*bits(1:2:end)-1)+1i*(2*bits(2:2:end)-1);
+        up=zeros(numSymbols*Sps,1); up(1:Sps:end)=symbols;
+        tx=conv(up,rrc); Ltx=length(tx);
+
+        ptr_buf_len=Ltx+3*Lh+4*length(rrc);
+        sub_ptr=zeros(ptr_buf_len,K_SUB); sub_ac=zeros(ptr_buf_len,K_SUB);
+
+        for ch=1:NUM_RX
+            amp=Arr(ch_rr(ch),ch_rz(ch),idx_sd).A; dl=real(Arr(ch_rr(ch),ch_rz(ch),idx_sd).delay);
+            v=(dl>0); amp=amp(v); dl=dl(v); dl=dl-gmin; v=(dl>=0); amp=amp(v); dl=dl(v);
+            if isempty(dl), continue; end
+
+            %% ★分数遅延CIR（sinc補間, +Lfracで先頭パスの裾切れ防止）
+            cs = dl*Fs + Lfrac;
+            h  = build_cir_frac(amp, cs, Lh, Lfrac);
+
+            %% チャネル適用（rx=tx⊛h, 厳密な小数遅延）→ 帯域内SNR → 受信整合RRC
+            rxBase=fftconv(tx,h);
+            sp=mean(abs(rxBase).^2); np=sp/10^(SNR_dB/10);
+            rxn=rxBase+sqrt(np/2)*(randn(size(rxBase))+1i*randn(size(rxBase)));
+            rxmf=fftconv(rxn,rrc);
+
+            %% PTR（同じ分数遅延CIRで整合フィルタ）
+            g=conj(flipud(h));
+            z=fftconv(rxmf,g); hac=fftconv(h,g);
+            Lz=min(length(z),ptr_buf_len); La=min(length(hac),ptr_buf_len);
+            si=ch_sub(ch);
+            sub_ptr(1:Lz,si)=sub_ptr(1:Lz,si)+z(1:Lz);
+            sub_ac(1:La,si) =sub_ac(1:La,si)+hac(1:La);
+        end
+
+        %% ビーム抽出（焦点を広域探索）＋正規化
+        X=zeros(numSymbols,K_SUB); valid=false(K_SUB,1); err_beam=zeros(K_SUB,1);
+        for s=1:K_SUB
+            if all(sub_ac(:,s)==0), continue; end
+            [~,pk]=max(abs(sub_ac(:,s)));
+            beam=find_sample(sub_ptr(:,s),pk,Sps,numSymbols,symbols,3*gd+4*Sps);
+            if isempty(beam), continue; end
+            a=(symbols'*beam)/(symbols'*symbols);
+            if abs(a)<eps||any(~isfinite(beam)), continue; end
+            eb=mean(abs(symbols-beam/a).^2);
+            % ★焦点ロック失敗ビーム(誤差大)のみ除外。使える弱ビームは残す
+            if eb < 3
+                X(:,s)=beam/a; valid(s)=true; err_beam(s)=eb;
+            end
+        end
+        X=X(:,valid); err_beam=err_beam(valid); Kv=size(X,2);
+        % 有効ビームが無い試行は「失敗」として記録（NaNにしない）
+        if Kv==0
+            SCM_Ps(idx_sd,it)=1; SCM_Pe(idx_sd,it)=1e3; SCM_B(idx_sd,it)=0.5;
+            MC_Ps(idx_sd,it)=1;  MC_Pe(idx_sd,it)=1e3;  MC_B(idx_sd,it)=0.5;
+            continue;
+        end
+        ti=(Ntrain+1):numSymbols;
+
+        %% 参考: SCM-MRC → 単一DFE（こちらも学習後凍結）
+        scm=zeros(numSymbols,1); wsum=0;
+        for k=1:Kv, w=1/err_beam(k); scm=scm+w*X(:,k); wsum=wsum+w; end
+        scm=scm/wsum;
+        scm_dfe=rls_dfe(scm,symbols,Nf,Nb,lambda,delta,Ntrain,FREEZE);
+        if all(isfinite(scm_dfe))
+            [~,SCM_B(idx_sd,it),cS,SCM_Ps(idx_sd,it),SCM_Pe(idx_sd,it)]=eval_region(symbols,scm_dfe,ti);
+        else
+            SCM_Ps(idx_sd,it)=1; SCM_Pe(idx_sd,it)=1; SCM_B(idx_sd,it)=0.5; cS=zeros(numSymbols,1);
+        end
+
+        %% 本命: マルチチャネルDFE（学習後凍結）
+        mc_out=mc_dfe(X,symbols,Nf,Nb,lambda,delta,Ntrain,mu_pll,FREEZE);
+        if all(isfinite(mc_out))
+            [~,MC_B(idx_sd,it),cM,MC_Ps(idx_sd,it),MC_Pe(idx_sd,it)]=eval_region(symbols,mc_out,ti);
+        else
+            MC_Ps(idx_sd,it)=1; MC_Pe(idx_sd,it)=1; MC_B(idx_sd,it)=0.5; cM=zeros(numSymbols,1); % 発散→OSNR0dB相当
+        end
+
+        SCM_syms{idx_sd}=cS; MC_syms{idx_sd}=cM;   % 成功試行ごとに更新（最後の成功を保持）
+    end
+end
+
+%% ==== 集計・出力 ====
+linO=@(Ps,Pe) 10*log10(mean(Ps,2)./mean(Pe,2)); mB=@(B) mean(B,2);
+disp('==========================================================================');
+fprintf(' 学習後凍結版(ver5): SCM+単一DFE vs マルチチャネルDFE（%d試行, Rs=%d, α=%.2f, Lfrac=%d）\n', Ntrials,Rs,alpha,Lfrac);
+disp('==========================================================================');
+fprintf(' 表記: 線形平均 / 中央値 / 失敗率（OSNR<%ddBの試行割合）\n', 10);
+for idx_sd=1:Nsd
+    oS=linO(SCM_Ps(idx_sd,:),SCM_Pe(idx_sd,:)); oM=linO(MC_Ps(idx_sd,:),MC_Pe(idx_sd,:));
+    % 各試行のOSNR → 中央値・失敗率
+    sT=10*log10(SCM_Ps(idx_sd,:)./SCM_Pe(idx_sd,:));
+    mT=10*log10(MC_Ps(idx_sd,:)./MC_Pe(idx_sd,:));
+    thr=10;   % 失敗判定しきい値 [dB]
+    fprintf('【音源%d】\n',idx_sd);
+    fprintf('  SCM-MRC + 単一DFE : 線形平均 %6.2f / 中央値 %6.2f dB   失敗率 %3.0f%%   BER %.4f\n', ...
+            oS, median(sT,'omitnan'), mean(sT<thr|isnan(sT))*100, mB(SCM_B(idx_sd,:)));
+    fprintf('  マルチチャネルDFE : 線形平均 %6.2f / 中央値 %6.2f dB   失敗率 %3.0f%%   BER %.4f   （改善 %+.2f dB）\n\n', ...
+            oM, median(mT,'omitnan'), mean(mT<thr|isnan(mT))*100, mB(MC_B(idx_sd,:)), oM-oS);
+end
+
+%% ==== 星座図 ====
+qpsk=[1+1i,1-1i,-1+1i,-1-1i];
+figure('Name','学習後凍結版(ver5): SCM vs MC-DFE','Position',[100 100 300*Nsd 560]);
+for idx_sd=1:Nsd
+    oS=linO(SCM_Ps(idx_sd,:),SCM_Pe(idx_sd,:)); oM=linO(MC_Ps(idx_sd,:),MC_Pe(idx_sd,:));
+    vS=SCM_syms{idx_sd}; if isempty(vS)||~any(isfinite(vS)), vS=zeros(4,1); end
+    vM=MC_syms{idx_sd};  if isempty(vM)||~any(isfinite(vM)), vM=zeros(4,1); end
+    subplot(2,Nsd,idx_sd);
+    plot(real(vS),imag(vS),'.','Color',[0.1 0.6 0.9],'MarkerSize',3); hold on;
+    plot(real(qpsk),imag(qpsk),'r+','MarkerSize',12,'LineWidth',2); axis equal; grid on;
+    lim=safelim(vS); xlim([-lim lim]); ylim([-lim lim]);
+    title(sprintf('SCM+単一DFE 音源%d\nOSNR=%.1fdB',idx_sd,oS));
+    subplot(2,Nsd,Nsd+idx_sd);
+    plot(real(vM),imag(vM),'.','Color',[0.85 0.3 0.1],'MarkerSize',3); hold on;
+    plot(real(qpsk),imag(qpsk),'r+','MarkerSize',12,'LineWidth',2); axis equal; grid on;
+    lim=safelim(vM); xlim([-lim lim]); ylim([-lim lim]);
+    title(sprintf('マルチチャネルDFE 音源%d\nOSNR=%.1fdB',idx_sd,oM));
+end
+sgtitle(sprintf('学習後凍結版ver5（α=%.2f, Lfrac=%d, K=%d, Nf=%d/ch, Nb=%d, Rs=%d）',alpha,Lfrac,K_SUB,Nf,Nb,Rs),'FontWeight','bold');
+
+%% ================= ローカル関数 =================
+function L = safelim(v)
+% 星座図の軸範囲を安全に算出（空/NaN/Infでも必ず有限値を返す）
+    a = abs([real(v(:)); imag(v(:))]);
+    a = a(isfinite(a));
+    if isempty(a), L = 3; else, L = max(3, ceil(max(a))); end
+end
+
+function h = build_cir_frac(amp, cs, Lh, L)
+% 分数遅延CIR：各パスを窓付きsincで小数サンプル位置 cs(p) に配置
+    h=zeros(Lh,1);
+    for p=1:numel(amp)
+        c=cs(p); m=(floor(c)-L:floor(c)+L).';
+        ok=m>=0 & m<=Lh-1; m=m(ok); if isempty(m), continue; end
+        x=m-c; w=0.5*(1+cos(pi*x/(L+1)));     % Hann窓
+        h(m+1)=h(m+1)+amp(p)*(sinc(x).*w);    % sinc補間（分数遅延）
+    end
+end
+
+function y = fftconv(a, b)
+% FFTによる線形畳み込み（複素対応, 高速）
+    n=length(a)+length(b)-1; y=ifft(fft(a(:),n).*fft(b(:),n));
+end
+
+function sym = find_sample(sig, start, Sps, numSymbols, symbols, maxoff)
+    bestd=0; best=-inf;
+    for d=0:Sps:maxoff
+        o=start+d; idx=o+(0:numSymbols-1)*Sps;
+        if idx(1)<1||idx(end)>length(sig), continue; end
+        v=osnr_of(sig(idx),symbols); if v>best, best=v; bestd=d; end
+    end
+    sym=[]; best=-inf;
+    for d=bestd-Sps:bestd+Sps
+        o=start+d; idx=o+(0:numSymbols-1)*Sps;
+        if idx(1)<1||idx(end)>length(sig), continue; end
+        cand=sig(idx); v=osnr_of(cand,symbols); if v>best, best=v; sym=cand; end
+    end
+end
+
+function v = osnr_of(cand, symbols)
+    g0=(symbols'*cand)/(symbols'*symbols);
+    if abs(g0)<eps, v=-inf; return; end
+    cc=cand/g0; v=sum(abs(symbols).^2)/max(sum(abs(symbols-cc).^2),eps);
+end
+
+function out = mc_dfe(X, symbols, Nf, Nb, lambda, delta, Ntrain, mu_pll, freeze)
+% マルチチャネルDFE（RLS）。★freeze=true なら n>Ntrain で w,P を凍結。
+%   凍結後も：判定 d で帰還バッファ fb を更新し、PLL位相 theta を追従させる。
+    if nargin<9, freeze=true; end
+    [N,K]=size(X); Ntap=K*Nf+Nb; w=zeros(Ntap,1);
+    for k=1:K, w((k-1)*Nf+1)=1/K; end
+    P=(1/delta)*eye(Ntap); ff=zeros(Nf,K); fb=zeros(Nb,1); theta=0; out=zeros(N,1);
+    for n=1:N
+        ff=[X(n,:); ff(1:end-1,:)];
+        ffvec=reshape(ff,[],1)*exp(-1i*theta);
+        u=[ffvec; -fb]; y=w'*u; out(n)=y;
+        d=sign(real(y))+1i*sign(imag(y));
+        if n<=Ntrain, s_ref=symbols(n); fb_new=symbols(n); else, s_ref=d; fb_new=d; end
+        % ★係数更新は学習区間のみ（freeze=true のとき）。学習後は w,P 固定。
+        if (n<=Ntrain) || ~freeze
+            e=s_ref-y; Pu=P*u; kap=Pu/(lambda+u'*Pu);
+            w=w+kap*conj(e); P=(P-kap*(Pu'))/lambda;
+        end
+        % PLLは常に追従（緩やかな位相ドリフトを吸収）
+        phi=imag(y*conj(s_ref)); theta=theta+mu_pll*phi;
+        fb=[fb_new; fb(1:end-1)];
+    end
+end
+
+function out = rls_dfe(x, symbols, Nf, Nb, lambda, delta, Ntrain, freeze)
+% 単一チャネルDFE（RLS）。★freeze=true なら n>Ntrain で w,P を凍結。
+    if nargin<8, freeze=true; end
+    N=length(x); Ntap=Nf+Nb; w=zeros(Ntap,1); w(1)=1; P=(1/delta)*eye(Ntap);
+    ff=zeros(Nf,1); fb=zeros(Nb,1); out=zeros(N,1);
+    for n=1:N
+        ff=[x(n); ff(1:end-1)]; u=[ff; -fb]; y=w'*u; out(n)=y;
+        d=sign(real(y))+1i*sign(imag(y));
+        if n<=Ntrain, s_ref=symbols(n); fb_new=symbols(n); else, s_ref=d; fb_new=d; end
+        if (n<=Ntrain) || ~freeze
+            e=s_ref-y; Pu=P*u; kap=Pu/(lambda+u'*Pu);
+            w=w+kap*conj(e); P=(P-kap*(Pu'))/lambda;
+        end
+        fb=[fb_new; fb(1:end-1)];
+    end
+end
+
+function [osnr, ber, comp, psig, perr] = eval_region(symbols, raw, idx)
+    s=symbols(idx); r=raw(idx); a=(s'*r)/(s'*s); c=r/a;
+    psig=mean(abs(s).^2); perr=mean(abs(s-c).^2); osnr=10*log10(psig/perr);
+    ber=mean([real(c)>0,imag(c)>0]~=[real(s)>0,imag(s)>0],'all'); comp=raw/a;
+end
